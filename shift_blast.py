@@ -187,12 +187,14 @@ def shift_blast(infile_name, database, infile_type="fasta", window=10000, outfil
                         orf_seq.seq = orf_seq.seq.translate(cds=True)
                         orf_seq.seq.alphabet = generic_protein
                     except TranslationError:
-                        print("Translation error [{}]: {}...{}".format(orf_seq.id, orf_seq[:10], orf_seq[:-10]))
+                        print("Translation error [{}]: {}".format(orf_seq.id, orf_seq.seq[:10]))
                         continue
 
                     # Throw out garbage alignment ORFs that are full of Xs
-                    if str(orf_seq.seq).upper().count("X") / len(orf_seq) > 0.1:
-                        print("Translation QC [{}]: {}...{}".format(orf_seq.id, orf_seq[:10], orf_seq[:-10]))
+                    garbage_ratio = str(orf_seq.seq).upper().count("X") / len(orf_seq)
+                    if garbage_ratio > 0.1:
+                        print("Translation QC {}% Indeterminate [{}]: {}".format(garbage_ratio, orf_seq.id,
+                                                                                 orf_seq.seq[:10]))
                         continue
 
                     # Save the ORF sequence
@@ -225,9 +227,9 @@ def shift_blast(infile_name, database, infile_type="fasta", window=10000, outfil
         # Iterate through the retained hits and print them to the output file
         for hit_seq, hit_ident, hit_simil, patent_ident in analysis_runner:
             if hit_ident is not None:
-                print("{}\t{}\t{}\t{}\t{}".format(hit_seq.id,
-                                                  hit_seq.description,
-                                                  hit_seq.name,
+                print("{}\t{}\t{}\t{}\t{}".format(hit_seq.id.replace("\n", " "),
+                                                  hit_seq.description.replace("\n", " "),
+                                                  hit_seq.name.replace("\n", " "),
                                                   patent_ident,
                                                   str(hit_seq.seq)),
                       file=out_fh)
@@ -387,10 +389,12 @@ class BlastProcessor:
 
         return_orfs = []
 
-        # Replace the 1...N orf count ID with an offset centered around 0, which should be the query, and return
+        # Replace the 1...N orf count ID with an offset centered around 0, which should be the query
+        # Also replace the NAME attribute with the location information
         for orf, start, stop, count in orf_list:
-            new_id = "{}[Window={}:{}][ORF={}:{}]".format(self.hsp.hit_id, self.hit_start, self.hit_end, start, stop)
-            return_orfs.append((SeqRecord(orf, id=self.hsp.hit_id, name=new_id), self.hsp_num, count - find_query[1]))
+            loc_string = "[Window={}:{}][ORF={}:{}]".format(self.hit_start, self.hit_end, start, stop)
+            return_orfs.append(
+                (SeqRecord(orf, id=self.hsp.hit_id, name=loc_string), self.hsp_num, count - find_query[1]))
         return return_orfs
 
 
