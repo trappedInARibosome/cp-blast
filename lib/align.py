@@ -1,16 +1,15 @@
-import tempfile
+import io
 import subprocess
-import os
 
-from Bio.Alphabet import generic_dna
 from Bio import AlignIO
 from Bio import SeqIO
+from Bio.Alphabet import generic_dna
+
 
 def muscle_wrapper(list_of_seqrecords, alphabet=generic_dna):
-
     """
     muscle_wrapper uses the command line MUSCLE application, with the default options for alignment, to align a list of
-    SeqRecord objects. Implemented with tempfiles instead of pipelining because of reasons I can't remember right now.
+    SeqRecord objects.
 
     The identity and similarity ratios are calculated so that they're the LARGEST possible number because that seemed
     more important for IP considerations. In some cases this may not be the most appropriate metric
@@ -41,52 +40,40 @@ def muscle_wrapper(list_of_seqrecords, alphabet=generic_dna):
     """
 
     # Create and write a temporary fasta file with the sequences
-    seq_file = tempfile.mkstemp(suffix=".fasta")
-    with open(seq_file[0], mode="w") as seq_fh:
-        SeqIO.write(list_of_seqrecords, seq_fh, "fasta")
+    seq_file = io.StringIO()
+    SeqIO.write(list_of_seqrecords, seq_file, "fasta")
 
     # Create a temporary file to hold MUSCLE output and pass the MUSCLE command to the shell.
-    muscle_file = tempfile.mkstemp(suffix=".muscle")
-    muscle_cmd = ["muscle", "-in", seq_file[1], "-out", muscle_file[1], "-clw"]
-    subprocess.call(muscle_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    muscle_cmd = ["muscle", "-clw"]
+    muscle_proc = subprocess.Popen(muscle_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                   stdin=subprocess.PIPE, universal_newlines=True)
+    muscle_output = muscle_proc.communicate(input=seq_file.getvalue())[0]
 
     ident = 0
     similar = 0
-    align_chars = ["*",":","."]
+    align_chars = ["*", ":", "."]
 
-    with open(muscle_file[0], mode="rU") as muscle_fh:
+    # Get the MultipleSeqAlign object through StringIO
+    try:
+        aligned = AlignIO.read(io.StringIO(muscle_output), "clustal", alphabet=alphabet)
+    except ValueError:
+        print("Multiple alignments in file. Skipping.")
+        aligned = None
 
-        #Read MUSCLE alignment into a MultipleSeqAlign object
-
+    for line in muscle_output.splitlines():
         try:
-            aligned = AlignIO.read(muscle_fh, "clustal", alphabet=alphabet)
-        except ValueError:
-            print("Multiple alignments in file. Skipping.")
-            aligned = None
-
-        #Read through the MUSCLE alignment
-
-        muscle_fh.seek(0)
-        for line in muscle_fh:
-            try:
-
-                #Pass lines that don't have degree of conservation symbols
-                if line.strip()[0] not in align_chars:
-                    continue
-
-                #Count up the identity and conserved residue symbols
-                else:
-                    ident += line.count("*")
-                    similar += line.count(":")
-
-            except IndexError:
+            # Pass lines that don't have degree of conservation symbols
+            if line.strip()[0] not in align_chars:
                 continue
 
-    identity_ratio = ident / min(map(len,aligned))
-    similar_ratio = (ident + similar) / min(map(len,aligned))
+            # Count up the identity and conserved residue symbols
+            else:
+                ident += line.count("*")
+                similar += line.count(":")
 
-    # Delete the temporary files
-    os.remove(seq_file[1])
-    os.remove(muscle_file[1])
+        except IndexError:
+            continue
 
+    identity_ratio = ident / min(map(len, aligned))
+    similar_ratio = (ident + similar) / min(map(len, aligned))
     return aligned, identity_ratio, similar_ratio
